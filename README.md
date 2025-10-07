@@ -126,16 +126,118 @@ Then open http://localhost:5000/ in a browser.
 - Error: `src refspec main does not match any` when pushing — this means your local branch is named `master`. Either push `master` or create/rename a local `main` branch.
 - If Docker fails to build, check that `requirements.txt` contains valid package names and that Docker has network access to fetch images.
 
+## Infrastructure as Code (IaC) — Terraform & DevOps
+
+There is an `Iac/` directory that contains a Terraform configuration used to provision a small AWS infrastructure for running this Flask app inside ECS Fargate. Below is a concise summary of what's present and how the DevOps pieces fit together.
+
+Folder and important files
+
+- `Iac/main.tf` — primary Terraform configuration (provider + resources).
+- `Iac/.terraform.lock.hcl` — provider dependency lock file (auto-managed by `terraform init`).
+- `Iac/terraform.tfstate` and `Iac/terraform.tfstate.backup` — Terraform state snapshots (do not store secrets in state; consider remote state).
+
+What the Terraform config provisions (summary)
+
+- AWS provider configured with `region = "ap-south-1"` (modify in `main.tf` as needed).
+- Networking: VPC (`aws_vpc`), a public subnet, Internet Gateway, Route Table and association.
+- Security group allowing inbound TCP on port 5000 (this is the port the Flask app listens on).
+- ECS: an ECS cluster (`aws_ecs_cluster`) and an ECS Fargate service (`aws_ecs_service`) running a single task.
+- IAM: an execution role for ECS tasks (`aws_iam_role` + managed policy attachment) so the task can run with proper permissions.
+- Task definition references container image `tuheen27/devops-projects:latest` and maps container port 5000.
+
+Key implementation notes / caveats
+
+- The container image name in the Terraform task definition is `tuheen27/devops-projects:latest`. You must build and push this image to a registry (Docker Hub, ECR, etc.) accessible from your ECS tasks before creating/updating the service.
+- The security group currently allows port 5000 from anywhere. For production, restrict that to a load balancer or specific CIDR ranges.
+- The repo contains a local `terraform.tfstate`. For team use, switch to remote state (S3 backend + DynamoDB locking) to avoid state conflicts:
+  - Example backend: S3 bucket for state and DynamoDB table for state locking.
+
+Recommended local Terraform workflow (PowerShell)
+
+1. Install Terraform (use the required version). `main.tf` declares `required_version = ">= 1.5.0"`. The state file shows it was last used with Terraform `1.13.3` — use the same or a newer compatible Terraform release.
+
+2. Configure AWS credentials (one of):
+
+```powershell
+# Option A: environment variables (temporary session)
+$env:AWS_ACCESS_KEY_ID = "<your-access-key>"
+$env:AWS_SECRET_ACCESS_KEY = "<your-secret>"
+$env:AWS_DEFAULT_REGION = "ap-south-1"
+
+# Option B: use named profile (recommended for local dev)
+aws configure --profile your-profile-name
+```
+
+3. Init, plan and apply inside the `Iac` folder:
+
+```powershell
+cd Iac
+terraform init
+terraform plan -out plan.tfplan
+terraform apply "plan.tfplan"
+```
+
+4. To tear down the environment:
+
+```powershell
+terraform destroy -auto-approve
+```
+
+Docker image build & push (so ECS can pull it)
+
+You have two common choices: Docker Hub or AWS ECR.
+
+- Docker Hub (simple):
+
+```powershell
+docker build -t tuheen27/devops-projects:latest ..\
+docker login
+docker push tuheen27/devops-projects:latest
+```
+
+- AWS ECR (recommended for private images in AWS):
+
+1) Create an ECR repository (one-time):
+
+```powershell
+aws ecr create-repository --repository-name devops-projects --region ap-south-1
+```
+
+2) Tag and push the image (the AWS CLI can print a login command):
+
+```powershell
+$(aws ecr get-login-password --region ap-south-1) | docker login --username AWS --password-stdin <aws_account_id>.dkr.ecr.ap-south-1.amazonaws.com
+docker tag tuheen27/devops-projects:latest <aws_account_id>.dkr.ecr.ap-south-1.amazonaws.com/devops-projects:latest
+docker push <aws_account_id>.dkr.ecr.ap-south-1.amazonaws.com/devops-projects:latest
+```
+
+CI/CD recommendations
+
+- Build & push container image in CI (GitHub Actions / GitLab CI / Jenkins) on push to `master`/`main`.
+- Run `terraform fmt` and `terraform validate` as part of the pipeline.
+- Create a pipeline job that runs `terraform plan` and stores the plan as an artifact for review. Require a manual approval step before `terraform apply` in production.
+- Use the official `hashicorp/setup-terraform` and `aws-actions/configure-aws-credentials` GitHub Actions to set up the environment and run Terraform.
+
+State management & security
+
+- Do NOT commit secrets (AWS keys, DB passwords) to the repository.
+- Move from local state to a remote backend (S3 + DynamoDB locks) for team collaboration.
+- Enable versioning on the S3 backend bucket to be able to recover from accidental state changes.
+
+Quick example of GitHub Actions steps (outline)
+
+1) Build & push image
+2) Run `terraform init` and `terraform plan` (artifact plan)
+3) Manual approval
+4) `terraform apply`
+
+If you'd like, I can create a GitHub Actions workflow file in `.github/workflows/` that builds the image and runs Terraform (with a manual approval step for apply). I can also help convert the Terraform local state to an S3 backend and add example `backend` configuration.
+
 ## Contributing
 
 - Small fixes: edit the files and open a pull request.
 - Major changes: open an issue to discuss the plan first.
 
-## License & contact
 
-- This repository does not include a license file. If you plan to share or publish, add a LICENSE file (for example MIT) to avoid ambiguity.
-- Contact: use your GitHub profile for contact information.
-
----
 
 
