@@ -138,11 +138,4 @@ Then open http://localhost:5000/ in a browser.
 
 ---
 
-If you want, I can also:
-
-- Add a short CONTRIBUTING.md and LICENSE file (MIT recommended).
-- Rename the repository default branch to `main` and update local branches to match.
-- Add a tiny systemd / Docker Compose example for easy local deployment.
-
-Tell me which follow-up you'd like and I'll do it.
 
